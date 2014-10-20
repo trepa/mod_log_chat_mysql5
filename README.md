@@ -23,14 +23,16 @@ Installation
   * Create required mysql table like this
 
 ```sql
-    CREATE TABLE mod_log_chat_mysql5 (
-       id INT AUTO_INCREMENT PRIMARY KEY,
-       fromJid VARCHAR(255) NOT NULL, 
-       toJid VARCHAR(255) NOT NULL, 
-       sentDate TIMESTAMP NOT NULL, 
-       body TEXT, 
-       type VARCHAR(10)
-    ) ENGINE=MyISAM CHARACTER SET utf8;
+  CREATE TABLE `mod_log_chat` ( 
+    `id` Int( 11 ) AUTO_INCREMENT NOT NULL, 
+    `fromJid` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL, 
+    `toJid` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL, 
+    `sentDate` Timestamp NOT NULL ON UPDATE CURRENT_TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+    `body` Text CHARACTER SET utf8 COLLATE utf8_general_ci NULL, 
+    `type` VarChar( 10 ) CHARACTER SET utf8 COLLATE utf8_general_ci NULL, 
+    `msg_id` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
+     PRIMARY KEY ( `id` )
+  ) ENGINE = InnoDB CHARACTER SET = utf8;
 ```
   * See conf/ejabberd.conf.sample for an example configuration
   * Once the ejabberd module is loaded and you have started ejabberd.  Look at the log files to see if the module has been correctly started (erlang.log) 
