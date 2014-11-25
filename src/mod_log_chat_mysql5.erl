@@ -30,6 +30,9 @@
 table_name() ->
 	"mod_log_chat".
 
+table_image() ->
+	"mod_log_image".
+
 %% start db connection
 start_link(Host, Opts) ->
 	Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
@@ -115,10 +118,18 @@ handle_call(stop, _From, State) ->
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
 handle_cast({insert_row, FromJid, ToJid, Body, Type, Id}, State) ->
-	Query = ["INSERT INTO ", table_name(), " (fromJid, toJid, sentDate, body, type, msg_id) VALUES",
-		"(?, ?, NOW(), ?, ?, ?)"],
+	Timestamp = now_to_microseconds(erlang:now()),
 
-	sql_query(Query, [FromJid, ToJid, Body, Type, Id]),
+	Query = ["INSERT INTO ", table_name(), " (fromJid, toJid, sentDate, body, type, msg_id, time) VALUES",
+		"(?, ?, NOW(), ?, ?, ?, ?)"],
+
+	sql_query(insert_row, Query, [FromJid, ToJid, Body, Type, Id, Timestamp]),
+	{noreply, State};
+handle_cast({insert_image, Id, Image}, State) ->
+	Query = ["INSERT INTO ", table_image(), " (msg_id, image) VALUES",
+		"(?, ?)"],
+
+	sql_query(insert_image, Query, [Id, Image]),
 	{noreply, State}.
 
 %% handle module infos
@@ -152,17 +163,22 @@ write_packet(From, To, Packet, Type, Id) ->
 			ok;
 		_ ->
 			FromJid = From#jid.luser++"@"++From#jid.lserver,
-			ResourceLen = length(To#jid.resource),
-			%% don't include resource when target is muc room
-			if
-				ResourceLen > 0 ->
-					ToJid = To#jid.luser++"@"++To#jid.lserver;
-				true ->
-					ToJid = To#jid.luser++"@"++To#jid.lserver
-			end,
+			ToJid = To#jid.luser++"@"++To#jid.lserver,
 			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
-			gen_server:cast(Proc, {insert_row, FromJid, ToJid, Body, Type, Id})
+			gen_server:cast(Proc, {insert_row, FromJid, ToJid, Body, Type, Id}),
+			Image = xml:get_path_s(Packet,[{elem,"image"},{attr,"URL"}]),
+			case Image of
+				"" ->
+					?DEBUG("Image: false", []);
+				_ ->
+					?DEBUG("Image: ~s", [Image]),
+					gen_server:cast(Proc, {insert_image, Id, Image})
+			end
 	end.
+
+%%write_image({_From, _To, XML} = _Packet) ->
+%%	Image = xml:get_subtag(XML, "image"),
+%%	?DEBUG("Image: ~s", [xml:element_to_string(Image)]).
 
 %% ==================
 %% SQL Query API
@@ -179,14 +195,23 @@ escape(html, [$& | Text]) ->
 escape(html, [Char | Text]) ->
 	[Char | escape(html, Text)].
 
-sql_query(Query, Params) ->
-	case sql_query_internal_silent(Query, Params) of
+sql_query(Type, Query, Params) ->
+	case sql_query_internal_silent(Type, Query, Params) of
 		{error, Reason} ->
 			?INFO_MSG("~p while ~p", [Reason, lists:append(Query)]),
 			{error, Reason};
 		Rez -> Rez
 	end.
 
-sql_query_internal_silent(Query, Params) ->
+sql_query_internal_silent(insert_row, Query, Params) ->
 	emysql:prepare(mod_log_chat_mysql5_stmt, Query),
-	emysql:execute(mod_log_chat_mysql5_db, mod_log_chat_mysql5_stmt, Params).
+	emysql:execute(mod_log_chat_mysql5_db, mod_log_chat_mysql5_stmt, Params);
+sql_query_internal_silent(insert_image, Query, Params) ->
+	emysql:prepare(mod_log_image_mysql5_stmt, Query),
+	emysql:execute(mod_log_chat_mysql5_db, mod_log_image_mysql5_stmt, Params);
+sql_query_internal_silent(_, _, _) ->
+	ok.
+
+now_to_microseconds({Mega, Sec, Micro}) ->
+    %%Epoch time in milliseconds from 1 Jan 1970
+    (Mega*1000000 + Sec)*1000000 + Micro. 

@@ -33,6 +33,14 @@ Installation
     `msg_id` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
      PRIMARY KEY ( `id` )
   ) ENGINE = InnoDB CHARACTER SET = utf8;
+
+CREATE TABLE `mod_log_image` ( 
+  `msg_id` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL, 
+  `image` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
+   PRIMARY KEY ( `msg_id` )
+, CONSTRAINT `unique_msg_id` UNIQUE( `msg_id` ) )
+ENGINE = InnoDB CHARACTER SET = utf8;
+CREATE UNIQUE INDEX `iamge` ON `mod_log_image`( `msg_id` );
 ```
   * See conf/ejabberd.conf.sample for an example configuration
   * Once the ejabberd module is loaded and you have started ejabberd.  Look at the log files to see if the module has been correctly started (erlang.log) 
