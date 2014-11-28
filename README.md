@@ -31,6 +31,7 @@ Installation
     `body` Text CHARACTER SET utf8 COLLATE utf8_general_ci NULL, 
     `type` VarChar( 10 ) CHARACTER SET utf8 COLLATE utf8_general_ci NULL, 
     `msg_id` VarChar( 255 ) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
+    `time` BigInt( 255 ) UNSIGNED NOT NULL,
      PRIMARY KEY ( `id` )
   ) ENGINE = InnoDB CHARACTER SET = utf8;
 
