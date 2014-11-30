@@ -27,11 +27,16 @@
 
 -define(PROCNAME, ?MODULE).
 
+-record(queue, {author}).
+
 table_name() ->
 	"mod_log_chat".
 
 table_image() ->
 	"mod_log_image".
+
+table_queue() ->
+	"first_message_queue".
 
 %% start db connection
 start_link(Host, Opts) ->
@@ -63,6 +68,8 @@ stop(Host) ->
 %% called from start_link/2 and sets up the db connection
 init([_Host, Opts]) ->
 	?INFO_MSG("Starting ~p", [?MODULE]),
+
+	inets:start(), 
 
 	crypto:start(),
 	application:start(emysql),
@@ -124,6 +131,7 @@ handle_cast({insert_row, FromJid, ToJid, Body, Type, Id}, State) ->
 		"(?, ?, NOW(), ?, ?, ?, ?)"],
 
 	sql_query(insert_row, Query, [FromJid, ToJid, Body, Type, Id, Timestamp]),
+	check_first_message(Id),
 	{noreply, State};
 handle_cast({insert_image, Id, Image}, State) ->
 	Query = ["INSERT INTO ", table_image(), " (msg_id, image) VALUES",
@@ -174,12 +182,26 @@ write_packet(From, To, Packet, Type, Id) ->
 					?DEBUG("Image: ~s", [Image]),
 					gen_server:cast(Proc, {insert_image, Id, Image})
 			end
+			
 	end.
 
-%%write_image({_From, _To, XML} = _Packet) ->
-%%	Image = xml:get_subtag(XML, "image"),
-%%	?DEBUG("Image: ~s", [xml:element_to_string(Image)]).
-
+check_first_message(Id) ->
+	Query = ["SELECT author FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
+	?DEBUG("Query: ~p, ID ~p", [Query, Id]),
+	Res = sql_query(select_queue, Query, [Id]),
+	?DEBUG("Result: ~n~p~n", [Res]),
+	Recs = emysql_util:as_record(Res, queue, record_info(fields, queue)),
+	Authors = [Rec#queue.author || Rec <- Recs],
+	case Authors of
+		[] -> 
+			?DEBUG("Found: false", []),
+			ok;
+		[Author] -> 
+			?DEBUG("Found: ~s", [Author]),
+			Post = ["id=", Id, "&author=", Author], 
+			httpc:request(post, {"http://hashtag.local/test.php", [], "application/x-www-form-urlencoded", list_to_binary(Post)},[],[{sync, false}]),
+			ok
+	end.
 %% ==================
 %% SQL Query API
 %% ==================
@@ -209,6 +231,9 @@ sql_query_internal_silent(insert_row, Query, Params) ->
 sql_query_internal_silent(insert_image, Query, Params) ->
 	emysql:prepare(mod_log_image_mysql5_stmt, Query),
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_image_mysql5_stmt, Params);
+sql_query_internal_silent(select_queue, Query, Params) ->
+	emysql:prepare(mod_log_select_mysql5_stmt, Query),
+	emysql:execute(mod_log_chat_mysql5_db, mod_log_select_mysql5_stmt, Params);
 sql_query_internal_silent(_, _, _) ->
 	ok.
 
