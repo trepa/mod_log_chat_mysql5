@@ -27,7 +27,7 @@
 
 -define(PROCNAME, ?MODULE).
 
--record(queue, {author}).
+-record(queue, {id}).
 
 table_name() ->
 	"mod_log_chat".
@@ -55,12 +55,14 @@ start(Host, Opts) ->
 				50,
 				worker,
 				[?MODULE]},
-	supervisor:start_child(ejabberd_sup, ChildSpec).
+	supervisor:start_child(ejabberd_sup, ChildSpec),
+	Url = gen_mod:get_module_opt(Host, ?MODULE, url, "http://localhost"),
+	ets:new(log_config, [named_table, protected, set, {keypos, 1}]),
+	ets:insert(log_config, {url, Url}).
 
 %% stop module (remove hooks) & stop gen server
 stop(Host) ->
-	ejabberd_hooks:delete(user_send_packet, Host,
-		?MODULE, log_packet_send, 55),
+	ejabberd_hooks:delete(user_send_packet, Host, ?MODULE, log_packet_send, 55),
 	Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
 	gen_server:call(Proc, stop),
 	supervisor:delete_child(ejabberd_sup, Proc).
@@ -173,6 +175,7 @@ write_packet(From, To, Packet, Type, Id) ->
 			FromJid = From#jid.luser++"@"++From#jid.lserver,
 			ToJid = To#jid.luser++"@"++To#jid.lserver,
 			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
+			%%Url = gen_mod:get_module_opt(From#jid.server, ?MODULE, url, "http://localhost"),
 			gen_server:cast(Proc, {insert_row, FromJid, ToJid, Body, Type, Id}),
 			Image = xml:get_path_s(Packet,[{elem,"image"},{attr,"URL"}]),
 			case Image of
@@ -185,23 +188,24 @@ write_packet(From, To, Packet, Type, Id) ->
 			
 	end.
 
-check_first_message(Id) ->
-	Query = ["SELECT author FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
-	?DEBUG("Query: ~p, ID ~p", [Query, Id]),
-	Res = sql_query(select_queue, Query, [Id]),
-	?DEBUG("Result: ~n~p~n", [Res]),
+check_first_message(Msg_id) ->
+	[{_, Url}] = ets:lookup(log_config, url),
+	Query = ["SELECT id FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
+	Res = sql_query(select_queue, Query, [Msg_id]),
 	Recs = emysql_util:as_record(Res, queue, record_info(fields, queue)),
-	Authors = [Rec#queue.author || Rec <- Recs],
-	case Authors of
+	Ids = [Rec#queue.id || Rec <- Recs],
+	?DEBUG("Id: ~p", [Ids]),
+	case Ids of
 		[] -> 
 			?DEBUG("Found: false", []),
 			ok;
-		[Author] -> 
-			?DEBUG("Found: ~s", [Author]),
-			Post = ["id=", Id, "&author=", Author], 
-			httpc:request(post, {"http://hashtag.local/test.php", [], "application/x-www-form-urlencoded", list_to_binary(Post)},[],[{sync, false}]),
+		[Id] -> 
+			?DEBUG("Id: ~p", [Id]),
+			Post = ["id=", io_lib:format("~p", [Id])],
+			httpc:request(post, {Url, [], "application/x-www-form-urlencoded", list_to_binary(Post)},[],[{sync, false}]),
 			ok
 	end.
+
 %% ==================
 %% SQL Query API
 %% ==================
