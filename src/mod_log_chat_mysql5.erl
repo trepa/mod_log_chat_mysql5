@@ -86,6 +86,11 @@ init([_Host, Opts]) ->
 
 	?INFO_MSG("Opening mysql connection ~s@~s:~p/~s", [User, Server, Port, DB]),
 	emysql:add_pool(mod_log_chat_mysql5_db, PoolSize, User, Password, Server, Port, DB, Encoding),
+
+	prepare_query(insert_row),
+	prepare_query(insert_image),
+	prepare_query(select_queue),
+
 	{ok, undefined}.
 
 %%--------------------------------------------------------------------
@@ -128,18 +133,12 @@ handle_call(stop, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({insert_row, FromJid, ToJid, Body, Type, Id}, State) ->
 	Timestamp = now_to_microseconds(erlang:now()),
-
-	Query = ["INSERT INTO ", table_name(), " (fromJid, toJid, sentDate, body, type, msg_id, time) VALUES",
-		"(?, ?, NOW(), ?, ?, ?, ?)"],
-
-	sql_query(insert_row, Query, [FromJid, ToJid, Body, Type, Id, Timestamp]),
-	check_first_message(Id),
+	
+	sql_query(insert_row, [FromJid, ToJid, Body, Type, Id, Timestamp]),
+	%%check_first_message(Id),
 	{noreply, State};
 handle_cast({insert_image, Id, Image}, State) ->
-	Query = ["INSERT INTO ", table_image(), " (msg_id, image) VALUES",
-		"(?, ?)"],
-
-	sql_query(insert_image, Query, [Id, Image]),
+	sql_query(insert_image, [Id, Image]),
 	{noreply, State}.
 
 %% handle module infos
@@ -172,11 +171,8 @@ write_packet(From, To, Packet, Type, Id) ->
 			?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
 			ok;
 		_ ->
-			FromJid = From#jid.luser++"@"++From#jid.lserver,
-			ToJid = To#jid.luser++"@"++To#jid.lserver,
 			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
-			%%Url = gen_mod:get_module_opt(From#jid.server, ?MODULE, url, "http://localhost"),
-			gen_server:cast(Proc, {insert_row, FromJid, ToJid, Body, Type, Id}),
+			gen_server:cast(Proc, {insert_row, From#jid.luser, To#jid.luser, Body, Type, Id}),
 			Image = xml:get_path_s(Packet,[{elem,"image"},{attr,"URL"}]),
 			case Image of
 				"" ->
@@ -190,8 +186,7 @@ write_packet(From, To, Packet, Type, Id) ->
 
 check_first_message(Msg_id) ->
 	[{_, Url}] = ets:lookup(log_config, url),
-	Query = ["SELECT id FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
-	Res = sql_query(select_queue, Query, [Msg_id]),
+	Res = sql_query(select_queue, [Msg_id]),
 	Recs = emysql_util:as_record(Res, queue, record_info(fields, queue)),
 	Ids = [Rec#queue.id || Rec <- Recs],
 	?DEBUG("Id: ~p", [Ids]),
@@ -221,24 +216,31 @@ escape(html, [$& | Text]) ->
 escape(html, [Char | Text]) ->
 	[Char | escape(html, Text)].
 
-sql_query(Type, Query, Params) ->
-	case sql_query_internal_silent(Type, Query, Params) of
+prepare_query(insert_row) ->
+	Query = ["INSERT INTO ", table_name(), " (fromJid, toJid, sentDate, body, type, msg_id, time) VALUES", "(?, ?, NOW(), ?, ?, ?, ?)"],
+	emysql:prepare(mod_log_chat_mysql5_stmt, Query);
+prepare_query(insert_image) ->
+	Query = ["INSERT INTO ", table_image(), " (msg_id, image) VALUES", "(?, ?)"],
+	emysql:prepare(mod_log_image_mysql5_stmt, Query);
+prepare_query(select_queue) ->
+	Query = ["SELECT id FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
+	emysql:prepare(mod_log_select_mysql5_stmt, Query).
+
+sql_query(Type, Params) ->
+	case sql_query_internal_silent(Type, Params) of
 		{error, Reason} ->
-			?INFO_MSG("~p while ~p", [Reason, lists:append(Query)]),
+			?INFO_MSG("~p", [Reason]),
 			{error, Reason};
 		Rez -> Rez
 	end.
 
-sql_query_internal_silent(insert_row, Query, Params) ->
-	emysql:prepare(mod_log_chat_mysql5_stmt, Query),
+sql_query_internal_silent(insert_row, Params) ->
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_chat_mysql5_stmt, Params);
-sql_query_internal_silent(insert_image, Query, Params) ->
-	emysql:prepare(mod_log_image_mysql5_stmt, Query),
+sql_query_internal_silent(insert_image, Params) ->
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_image_mysql5_stmt, Params);
-sql_query_internal_silent(select_queue, Query, Params) ->
-	emysql:prepare(mod_log_select_mysql5_stmt, Query),
+sql_query_internal_silent(select_queue, Params) ->
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_select_mysql5_stmt, Params);
-sql_query_internal_silent(_, _, _) ->
+sql_query_internal_silent(_, _) ->
 	ok.
 
 now_to_microseconds({Mega, Sec, Micro}) ->
