@@ -27,16 +27,11 @@
 
 -define(PROCNAME, ?MODULE).
 
--record(queue, {id}).
-
 table_name() ->
 	"mod_log_chat".
 
 table_image() ->
 	"mod_log_image".
-
-table_queue() ->
-	"first_message_queue".
 
 %% start db connection
 start_link(Host, Opts) ->
@@ -55,10 +50,7 @@ start(Host, Opts) ->
 				50,
 				worker,
 				[?MODULE]},
-	supervisor:start_child(ejabberd_sup, ChildSpec),
-	Url = gen_mod:get_module_opt(Host, ?MODULE, url, "http://localhost"),
-	ets:new(log_config, [named_table, protected, set, {keypos, 1}]),
-	ets:insert(log_config, {url, Url}).
+	supervisor:start_child(ejabberd_sup, ChildSpec).
 
 %% stop module (remove hooks) & stop gen server
 stop(Host) ->
@@ -89,7 +81,6 @@ init([_Host, Opts]) ->
 
 	prepare_query(insert_row),
 	prepare_query(insert_image),
-	prepare_query(select_queue),
 
 	{ok, undefined}.
 
@@ -133,9 +124,7 @@ handle_call(stop, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({insert_row, FromJid, ToJid, Body, Type, Id}, State) ->
 	Timestamp = now_to_microseconds(erlang:now()),
-	
 	sql_query(insert_row, [FromJid, ToJid, Body, Type, Id, Timestamp]),
-	%%check_first_message(Id),
 	{noreply, State};
 handle_cast({insert_image, Id, Image}, State) ->
 	sql_query(insert_image, [Id, Image]),
@@ -168,7 +157,7 @@ write_packet(From, To, Packet, Type, Id) ->
 	Body = escape(html, xml:get_path_s(Packet, [{elem, "body"}, cdata])),
 	case Body of
 		"" -> %% don't log empty messages
-			?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
+			%%?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
 			ok;
 		_ ->
 			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
@@ -176,29 +165,13 @@ write_packet(From, To, Packet, Type, Id) ->
 			Image = xml:get_path_s(Packet,[{elem,"image"},{attr,"URL"}]),
 			case Image of
 				"" ->
-					?DEBUG("Image: false", []);
+					%%?DEBUG("Image: false", []);
+					ok;
 				_ ->
-					?DEBUG("Image: ~s", [Image]),
+					%%?DEBUG("Image: ~s", [Image]),
 					gen_server:cast(Proc, {insert_image, Id, Image})
 			end
 			
-	end.
-
-check_first_message(Msg_id) ->
-	[{_, Url}] = ets:lookup(log_config, url),
-	Res = sql_query(select_queue, [Msg_id]),
-	Recs = emysql_util:as_record(Res, queue, record_info(fields, queue)),
-	Ids = [Rec#queue.id || Rec <- Recs],
-	?DEBUG("Id: ~p", [Ids]),
-	case Ids of
-		[] -> 
-			?DEBUG("Found: false", []),
-			ok;
-		[Id] -> 
-			?DEBUG("Id: ~p", [Id]),
-			Post = ["id=", io_lib:format("~p", [Id])],
-			httpc:request(post, {Url, [], "application/x-www-form-urlencoded", list_to_binary(Post)},[],[{sync, false}]),
-			ok
 	end.
 
 %% ==================
@@ -222,9 +195,8 @@ prepare_query(insert_row) ->
 prepare_query(insert_image) ->
 	Query = ["INSERT INTO ", table_image(), " (msg_id, image) VALUES", "(?, ?)"],
 	emysql:prepare(mod_log_image_mysql5_stmt, Query);
-prepare_query(select_queue) ->
-	Query = ["SELECT id FROM ", table_queue(), " WHERE msg_id  = ? LIMIT 1"],
-	emysql:prepare(mod_log_select_mysql5_stmt, Query).
+prepare_query(_) ->
+	ok.
 
 sql_query(Type, Params) ->
 	case sql_query_internal_silent(Type, Params) of
@@ -238,8 +210,6 @@ sql_query_internal_silent(insert_row, Params) ->
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_chat_mysql5_stmt, Params);
 sql_query_internal_silent(insert_image, Params) ->
 	emysql:execute(mod_log_chat_mysql5_db, mod_log_image_mysql5_stmt, Params);
-sql_query_internal_silent(select_queue, Params) ->
-	emysql:execute(mod_log_chat_mysql5_db, mod_log_select_mysql5_stmt, Params);
 sql_query_internal_silent(_, _) ->
 	ok.
 
