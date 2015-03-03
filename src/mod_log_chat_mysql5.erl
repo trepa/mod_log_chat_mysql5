@@ -166,7 +166,7 @@ log_packet(_From, _To, _Packet) ->
 
 %% parse message and send to db connection gen_server
 write_packet(From, To, Packet, Type, Id) ->
-	Body = escape(html, xml:get_path_s(Packet, [{elem, "body"}, cdata])),
+	Body = escape(text, xml:get_path_s(Packet, [{elem, "body"}, cdata])),
 	case Body of
 		"" -> %% don't log empty messages
 			?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
