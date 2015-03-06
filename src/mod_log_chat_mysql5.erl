@@ -21,8 +21,9 @@
 		terminate/2, code_change/3]).
 
 %%-define(ejabberd_debug, true).
-
+%-define(LAGER, true).
 -include("ejabberd.hrl").
+-include("logger.hrl").
 -include("jlib.hrl").
 
 -define(PROCNAME, ?MODULE).
@@ -61,22 +62,22 @@ stop(Host) ->
 
 %% called from start_link/2 and sets up the db connection
 init([_Host, Opts]) ->
-	?INFO_MSG("Starting ~p", [?MODULE]),
+	error_logger:info_msg("Starting ~p", [?MODULE]),
 
 	inets:start(), 
 
 	crypto:start(),
 	application:start(emysql),
 
-	Server = gen_mod:get_opt(server, Opts, "localhost"),
-	Port = gen_mod:get_opt(port, Opts, 3306),
-	DB = gen_mod:get_opt(db, Opts, "logdb"),
-	User = gen_mod:get_opt(user, Opts, "root"),
-	Password = gen_mod:get_opt(password, Opts, ""),
-	PoolSize = gen_mod:get_opt(pool_size, Opts, 1),
-	Encoding = gen_mod:get_opt(encoding, Opts, utf8),
+	Server = gen_mod:get_opt(server, Opts, fun(Val) -> binary_to_list(Val) end, "localhost"),
+	Port = gen_mod:get_opt(port, Opts, fun(Val) -> Val end, 3306),
+	DB = gen_mod:get_opt(db, Opts, fun(Val) -> binary_to_list(Val) end, "logdb"),
+	User = gen_mod:get_opt(user, Opts, fun(Val) -> binary_to_list(Val) end, "root"),
+	Password = gen_mod:get_opt(password, Opts, fun(Val) -> binary_to_list(Val) end, ""),
+	PoolSize = gen_mod:get_opt(pool_size, Opts, fun(Val) -> Val end, 1),
+	Encoding = gen_mod:get_opt(encoding, Opts, fun(Val) -> Val end, utf8),
 
-	?INFO_MSG("Opening mysql connection ~s@~s:~p/~s", [User, Server, Port, DB]),
+	error_logger:info_msg("Opening mysql connection ~s@~s:~p/~s ~p ~p ~p", [User, Server, Port, DB, Password, PoolSize, Encoding]),
 	emysql:add_pool(mod_log_chat_mysql5_db, PoolSize, User, Password, Server, Port, DB, Encoding),
 
 	prepare_query(insert_row),
@@ -92,7 +93,7 @@ init([_Host, Opts]) ->
 %% The return value is ignored.
 %%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
-	?INFO_MSG("Terminate called", []),
+	error_logger:info_msg("Terminate called", []),
 	emysql:remove_pool(mod_log_chat_mysql5_db),
 	emysql:stop(),
 	ok.
@@ -134,27 +135,27 @@ handle_cast({insert_image, Id, Image}, State) ->
 handle_info({'DOWN', _MonitorRef, process, _Pid, _Info}, State) ->
 	{stop, connection_dropped, State};
 handle_info(Info, State) ->
-	?INFO_MSG("Got Info:~p, State:~p", [Info, State]),
+	error_logger:info_msg("Got Info:~p, State:~p", [Info, State]),
 	{noreply, State}.
 
 %% ejabberd hook
 log_packet_send(From, To, Packet) ->
 	log_packet(From, To, Packet).
 
-log_packet(From, To, Packet = {xmlelement, "message", Attrs, _Els}) ->
-	case xml:get_attr_s("type", Attrs) of
-		"error" -> %% we don't log errors
-			?DEBUG("dropping error: ~s", [xml:element_to_string(Packet)]),
+log_packet(From, To, Packet = #xmlel{name = <<"message">>, attrs = Attrs}) ->
+	Type = xml:get_attr_s(<<"type">>, Attrs),
+	case Type of
+		<<"error">> -> %% we don't log errors
 			ok;
 		_ ->
-			write_packet(From, To, Packet, xml:get_attr_s("type", Attrs), xml:get_attr_s("id", Attrs))
+			write_packet(From, To, Packet, Type, xml:get_attr_s(<<"id">>, Attrs))
 	end;
 log_packet(_From, _To, _Packet) ->
 	ok.
 
 %% parse message and send to db connection gen_server
 write_packet(From, To, Packet, Type, Id) ->
-	Body = escape(html, xml:get_path_s(Packet, [{elem, "body"}, cdata])),
+	Body = xml:get_path_s(Packet, [{elem, <<"body">>}, cdata]),
 	case Body of
 		"" -> %% don't log empty messages
 			%%?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
@@ -162,13 +163,11 @@ write_packet(From, To, Packet, Type, Id) ->
 		_ ->
 			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
 			gen_server:cast(Proc, {insert_row, From#jid.luser, To#jid.luser, Body, Type, Id}),
-			Image = xml:get_path_s(Packet,[{elem,"image"},{attr,"URL"}]),
+			Image = xml:get_path_s(Packet, [{elem, <<"image">>}, {attr, <<"URL">>}]),
 			case Image of
-				"" ->
-					%%?DEBUG("Image: false", []);
+				<<"">> ->
 					ok;
 				_ ->
-					%%?DEBUG("Image: ~s", [Image]),
 					gen_server:cast(Proc, {insert_image, Id, Image})
 			end
 			
@@ -177,17 +176,6 @@ write_packet(From, To, Packet, Type, Id) ->
 %% ==================
 %% SQL Query API
 %% ==================
-
-escape(text, Text) ->
-	Text;
-escape(_, "") ->
-	"";
-escape(html, [$< | Text]) ->
-	"&lt;" ++ escape(html, Text);
-escape(html, [$& | Text]) ->
-	"&amp;" ++ escape(html, Text);
-escape(html, [Char | Text]) ->
-	[Char | escape(html, Text)].
 
 prepare_query(insert_row) ->
 	Query = ["INSERT INTO ", table_name(), " (fromJid, toJid, sentDate, body, type, msg_id, time) VALUES", "(?, ?, NOW(), ?, ?, ?, ?)"],
@@ -201,7 +189,7 @@ prepare_query(_) ->
 sql_query(Type, Params) ->
 	case sql_query_internal_silent(Type, Params) of
 		{error, Reason} ->
-			?INFO_MSG("~p", [Reason]),
+			error_logger:info_msg("~p", [Reason]),
 			{error, Reason};
 		Rez -> Rez
 	end.
