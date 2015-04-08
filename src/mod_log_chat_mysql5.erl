@@ -157,7 +157,7 @@ log_packet(_From, _To, _Packet) ->
 write_packet(From, To, Packet, Type, Id) ->
 	Body = xml:get_path_s(Packet, [{elem, <<"body">>}, cdata]),
 	case Body of
-		"" -> %% don't log empty messages
+		<<"">> -> %% don't log empty messages
 			%%?DEBUG("not logging empty message from ~s",[jlib:jid_to_string(From)]),
 			ok;
 		_ ->
