@@ -14,7 +14,8 @@
 %% gen_mod callbacks
 -export([start/2, start_link/2,
 		stop/1,
-		log_packet_send/3]).
+		log_packet_send/3,
+		log_packet_receive/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -42,6 +43,7 @@ start_link(Host, Opts) ->
 %% Start module & start gen_server as a child for the db connection
 start(Host, Opts) ->
 	ejabberd_hooks:add(user_send_packet, Host, ?MODULE, log_packet_send, 55),
+	ejabberd_hooks:add(user_receive_packet, Host, ?MODULE, log_packet_receive, 55),
 	Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
 
 	ChildSpec =
@@ -56,6 +58,7 @@ start(Host, Opts) ->
 %% stop module (remove hooks) & stop gen server
 stop(Host) ->
 	ejabberd_hooks:delete(user_send_packet, Host, ?MODULE, log_packet_send, 55),
+	ejabberd_hooks:delete(user_receive_packet, Host, ?MODULE, log_packet_receive, 55),
 	Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
 	gen_server:call(Proc, stop),
 	supervisor:delete_child(ejabberd_sup, Proc).
@@ -129,6 +132,9 @@ handle_cast({insert_row, FromJid, ToJid, Body, Type, Id}, State) ->
 	{noreply, State};
 handle_cast({insert_image, Id, Image}, State) ->
 	sql_query(insert_image, [Id, Image]),
+	{noreply, State};
+handle_cast({receive_message, Jid, Type, Id}, State) ->
+	error_logger:info_msg("log_packet_receive message ~p ~p ~p", [Id, Jid, Type]),
 	{noreply, State}.
 
 %% handle module infos
@@ -172,6 +178,23 @@ write_packet(From, To, Packet, Type, Id) ->
 			end
 			
 	end.
+
+log_packet_receive(_JID, From, _To, #xmlel{name = <<"message">>, attrs = Attrs} = _Packet) ->
+	Type = xml:get_attr_s(<<"type">>, Attrs),
+	case Type of
+		<<"error">> -> %% we don't log errors
+			%%error_logger:info_msg("dropping error: ~s", [xml:element_to_string(Packet)]),
+			ok;
+		_ ->
+			error_logger:info_msg("dropping error: ~s", [xml:element_to_string(Packet)]),
+			Id = xml:get_attr_s(<<"id">>, Attrs),
+			Proc = gen_mod:get_module_proc(From#jid.server, ?PROCNAME),
+			gen_server:cast(Proc, {receive_message, From#jid.luser, Type, Id}),
+			ok
+    end;
+log_packet_receive(_, _, _, _) ->
+	error_logger:info_msg("log_packet_receive empty", []),
+    ok.
 
 %% ==================
 %% SQL Query API
